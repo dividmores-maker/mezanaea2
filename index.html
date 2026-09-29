@@ -443,7 +443,7 @@ body.readonly-mode select:not(#actlog-filter) {
   <div class="sp-cross-wrap"><div class="sp-ring"></div><div class="sp-ring r2"></div><div class="sp-cross">✝</div></div>
   <h1>أهلاً بك في نظام إدارة الكنيسة</h1>
   <div class="sp-sub">كنيسة العذراء مريم والشهيد مارجرجس بالكابلات</div>
-  <div class="sp-msg"> 🕊</div>
+  <div class="sp-msg">نتمنى لك يوماً مباركاً 🕊️</div>
   <div class="sp-bar-wrap">
     <div class="sp-bar"><div class="sp-fill" id="sp-fill"></div></div>
     <div class="sp-info"><span id="sp-text">جاري التحميل...</span><span><span class="sp-check">✔</span><span class="sp-pct" id="sp-pct">0%</span></span></div>
@@ -1121,6 +1121,24 @@ function setSyncStatus(status) {
 window._firebaseReady = true;
 document.dispatchEvent(new Event('firebase-ready'));
 
+// ── Users sync (shared across all devices) ──────────────────────────────
+const USERS_REF = doc(db, 'church', 'users');
+window._usersFireSave = async function(users){
+  try{ await setDoc(USERS_REF, { payload: JSON.stringify(users), updatedAt: Date.now() }); return true; }
+  catch(e){ return false; }
+};
+window._usersFireListen = function(onRemote, onMissing){
+  onSnapshot(USERS_REF, (snap)=>{
+    if(snap.exists()){
+      try{ onRemote(JSON.parse(snap.data().payload || '[]'), snap.metadata.fromCache); }catch(e){}
+    } else if(!snap.metadata.fromCache){
+      onMissing();
+    }
+  }, ()=>{});
+};
+window._usersSyncReady = true;
+document.dispatchEvent(new Event('users-sync-ready'));
+
 // ── Mabani listener for combined summary + embedded tab ───────────────────
 const MABANI_REF = doc(db, 'church', 'mabani');
 
@@ -1427,7 +1445,30 @@ function getUsers() {
 }
 function saveUsers(users) {
   localStorage.setItem('church_users', JSON.stringify(users));
+  if (window._usersFireSave) window._usersFireSave(users);
 }
+
+// Keep users in sync across devices (Firestore doc: church/users)
+function initUsersSync() {
+  if (window._usersSyncStarted || !window._usersFireListen) return;
+  window._usersSyncStarted = true;
+  window._usersFireListen(
+    (remote, fromCache) => {
+      if (!Array.isArray(remote)) return;
+      if (!remote.find(u => u.username === DEFAULT_ADMIN.username)) remote.unshift(DEFAULT_ADMIN);
+      const local = JSON.stringify(getUsers());
+      if (local === JSON.stringify(remote)) return;
+      localStorage.setItem('church_users', JSON.stringify(remote));
+      const modal = document.getElementById('users-modal');
+      if (modal && modal.style.display === 'flex') renderUsersList();
+    },
+    () => { // nothing in the cloud yet: upload this device's users
+      if (window._usersFireSave) window._usersFireSave(getUsers());
+    }
+  );
+}
+if (window._usersSyncReady) initUsersSync();
+else document.addEventListener('users-sync-ready', initUsersSync);
 
 // ── Login / Logout ────────────────────────────────────────────────────────────
 function doLogin() {
